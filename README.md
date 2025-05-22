@@ -43,3 +43,8 @@ LICENSE:
 --------
 (c) 2025 DieArchitekt. All rights reserved.
 Use, modify, and distribute with credit.
+
+R. P. Kennedy  
+ORCID: [0009-0006-3598-0581](https://orcid.org/0009-0006-3598-0581)  
+GitHub: https://github.com/DieArchitekt  
+MQL5: https://www.mql5.com/en/users/diearchitekt
