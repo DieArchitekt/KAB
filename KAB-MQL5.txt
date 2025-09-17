@@ -1,0 +1,162 @@
+//+------------------------------------------------------------------+
+//|                                              kab.mq5             |
+//| Author: R. P. Kennedy (DieArchitekt)                             |
+//| GitHub: github.com/DieArchitekt                                  |
+//| ORCID: 0009-0006-3598-0581                                       |
+//+------------------------------------------------------------------+
+#property strict
+#property copyright "© DieArchitekt 2025"
+#property version   "1.41"
+#property description "Recursive smoother using ATR-ratio-based adaptive gain."
+
+#property indicator_chart_window
+#property indicator_buffers 1
+#property indicator_plots   1
+
+#property indicator_label1  "KAB"
+#property indicator_type1   DRAW_LINE
+#property indicator_color1  clrOrchid
+#property indicator_width1  2
+
+//+------------------------------------------------------------------+
+//| Input parameters                                                 |
+//+------------------------------------------------------------------+
+input double baseAlpha      = 0.1; // Base smoothing factor
+input int    shortATRPeriod = 8;   // Fast ATR period
+input int    longATRPeriod  = 64;  // Slow ATR period
+input bool   useTwoStage    = true; // enable 2-stage smoothing
+input double smoothFactor   = 0.2; // 2nd-stage smoothing factor
+input double maxAlpha       = 0.2; // maximum adaptive gain
+
+// --- lock with hysteresis + time-based release
+input bool   enableLock     = true;
+input double lockOnThresh   = 2.0;   // engage threshold
+input double lockOffThresh  = 1.8;   // release threshold
+input int    unlockBars     = 50;    // 0 = disable time release
+
+// --- closed-bar policy
+input bool   useClosedOnly  = false; // use bar-1 at bar 0
+
+//+------------------------------------------------------------------+
+//| Internal buffer                                                  |
+//+------------------------------------------------------------------+
+double m_kabBuffer[];
+const double EPS = 1e-10;
+
+// --- helper
+double CalcTR(const double hi,const double lo,const double prevClose)
+{
+   double a = hi - lo;
+   double b = MathAbs(hi - prevClose);
+   double c = MathAbs(lo - prevClose);
+   return MathMax(a, MathMax(b, c));
+}
+
+//+------------------------------------------------------------------+
+//| Initialize indicator                                             |
+//+------------------------------------------------------------------+
+int OnInit()
+{
+   SetIndexBuffer(0, m_kabBuffer, INDICATOR_DATA);
+   ArraySetAsSeries(m_kabBuffer, true);
+   IndicatorSetInteger(INDICATOR_DIGITS, _Digits);
+   IndicatorSetString(INDICATOR_SHORTNAME, "KAB");
+   return(INIT_SUCCEEDED);
+}
+
+//+------------------------------------------------------------------+
+//| Main calculation function                                        |
+//+------------------------------------------------------------------+
+int OnCalculate(const int rates_total,
+                const int prev_calculated,
+                const datetime &time[],
+                const double   &open[],
+                const double   &high[],
+                const double   &low[],
+                const double   &close[],
+                const long     &tick_vol[],
+                const long     &vol[],
+                const int      &spread[])
+{
+   // enforce series
+   ArraySetAsSeries(open,  true);
+   ArraySetAsSeries(high,  true);
+   ArraySetAsSeries(low,   true);
+   ArraySetAsSeries(close, true);
+
+   // guards
+   if(shortATRPeriod < 1 || longATRPeriod < shortATRPeriod) { Print("Bad ATR periods"); return 0; }
+   if(baseAlpha <= 0.0 || maxAlpha <= 0.0 || baseAlpha > maxAlpha || maxAlpha > 1.0) { Print("Bad alpha bounds"); return 0; }
+   if(lockOffThresh > lockOnThresh) { Print("Hysteresis requires lockOff<=lockOn"); return 0; }
+   if(rates_total < longATRPeriod + 3) return 0;
+
+   // constants
+   const double kShort = 2.0 / (1.0 + shortATRPeriod);
+   const double kLong  = 2.0 / (1.0 + longATRPeriod);
+
+   // determine starting point
+   int start;
+   if(prev_calculated == 0)
+   {
+      ArrayInitialize(m_kabBuffer, EMPTY_VALUE);
+      start = rates_total - 2;   // full calculation on first call
+   }
+   else
+   {
+      start = rates_total - prev_calculated;
+      if(start < 1) start = 1;
+   }
+
+   // seed ATR and lock state
+   int piStart = useClosedOnly ? MathMax(start,1) : start;
+   double sATR = CalcTR(high[piStart], low[piStart], close[piStart+1]);
+   double lATR = sATR;
+
+   bool locked = false;
+   int  lockCount = 0;
+
+   // set anchor output so first step has a base
+   if(prev_calculated == 0)
+      m_kabBuffer[start] = close[piStart];
+
+   // main loop: newest←older
+   for(int i = start; i >= 0; --i)
+   {
+      int pi = useClosedOnly ? MathMax(i,1) : i;
+
+      // ATR updates
+      double tr = CalcTR(high[pi], low[pi], close[pi+1]);
+      sATR = (1.0 - kShort) * sATR + kShort * tr;
+      lATR = (1.0 - kLong ) * lATR + kLong  * sATR;
+
+      double ratio = sATR / MathMax(lATR, EPS);
+      if(ratio > 1.0/EPS) ratio = 1.0/EPS;
+
+      double alpha = baseAlpha * ratio;
+      if(alpha > maxAlpha) alpha = maxAlpha;
+
+      // hysteresis + time release
+      if(locked){
+         lockCount++;
+         if(ratio < lockOffThresh || (unlockBars > 0 && lockCount >= unlockBars)){
+            locked=false;
+            lockCount=0;
+         }
+      }else{
+         if(enableLock && ratio > lockOnThresh){
+            locked=true;
+            lockCount=0;
+         }
+      }
+
+      // previous output in time is i+1
+      double prev = (i==start ? m_kabBuffer[i] : m_kabBuffer[i+1]);
+      double unsm = prev + alpha * (close[pi] - prev);
+      double smm  = useTwoStage ? prev + smoothFactor * (unsm - prev) : unsm;
+
+      m_kabBuffer[i] = locked ? prev : smm;
+   }
+
+   return(rates_total);
+}
+//+------------------------------------------------------------------+

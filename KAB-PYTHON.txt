@@ -1,0 +1,111 @@
+# ===============================================================
+#  Author: R. P. Kennedy (DieArchitekt)
+#  GitHub: github.com/DieArchitekt
+#  ORCID: 0009-0006-3598-0581
+# ===============================================================
+
+import numpy as np
+
+def kab_indicator(open_, high, low, close,
+                  baseAlpha=0.1,
+                  shortATRPeriod=8,
+                  longATRPeriod=64,
+                  useTwoStage=True,
+                  smoothFactor=0.2,
+                  maxAlpha=0.2,
+                  enableLock=True,
+                  lockOnThresh=2.0,
+                  lockOffThresh=1.8,
+                  unlockBars=50,
+                  useClosedOnly=False):
+    """
+    KAB.
+    
+    Args:
+        open_, high, low, close : arrays (numpy or list-like)
+            OHLC data (most recent last).
+        baseAlpha : float
+        shortATRPeriod : int
+        longATRPeriod : int
+        useTwoStage : bool
+        smoothFactor : float
+        maxAlpha : float
+        enableLock : bool
+        lockOnThresh : float
+        lockOffThresh : float
+        unlockBars : int
+        useClosedOnly : bool
+    
+    Returns:
+        numpy.ndarray : smoothed series (same length as input)
+    """
+
+    n = len(close)
+    kab = np.full(n, np.nan, dtype=float)
+    EPS = 1e-10
+
+    if shortATRPeriod < 1 or longATRPeriod < shortATRPeriod:
+        raise ValueError("Bad ATR periods")
+    if baseAlpha <= 0.0 or maxAlpha <= 0.0 or baseAlpha > maxAlpha or maxAlpha > 1.0:
+        raise ValueError("Bad alpha bounds")
+    if lockOffThresh > lockOnThresh:
+        raise ValueError("Hysteresis requires lockOff<=lockOn")
+    if n < longATRPeriod + 3:
+        return kab
+
+    # smoothing constants
+    kShort = 2.0 / (1.0 + shortATRPeriod)
+    kLong  = 2.0 / (1.0 + longATRPeriod)
+
+    def calc_tr(hi, lo, prevClose):
+        a = hi - lo
+        b = abs(hi - prevClose)
+        c = abs(lo - prevClose)
+        return max(a, b, c)
+
+    # initialize
+    start = n - 2
+    piStart = max(start, 1) if useClosedOnly else start
+    sATR = calc_tr(high[piStart], low[piStart], close[piStart+1])
+    lATR = sATR
+
+    locked = False
+    lockCount = 0
+
+    kab[start] = close[piStart]
+
+    for i in range(start, -1, -1):
+        pi = max(i, 1) if useClosedOnly else i
+
+        # ATR updates
+        tr = calc_tr(high[pi], low[pi], close[pi+1])
+        sATR = (1.0 - kShort) * sATR + kShort * tr
+        lATR = (1.0 - kLong) * lATR + kLong  * sATR
+
+        ratio = sATR / max(lATR, EPS)
+        if ratio > 1.0 / EPS:
+            ratio = 1.0 / EPS
+
+        alpha = baseAlpha * ratio
+        if alpha > maxAlpha:
+            alpha = maxAlpha
+
+        # hysteresis + time release
+        if locked:
+            lockCount += 1
+            if ratio < lockOffThresh or (unlockBars > 0 and lockCount >= unlockBars):
+                locked = False
+                lockCount = 0
+        else:
+            if enableLock and ratio > lockOnThresh:
+                locked = True
+                lockCount = 0
+
+        # recursive smoothing
+        prev = kab[i] if i == start else kab[i+1]
+        unsm = prev + alpha * (close[pi] - prev)
+        smm  = prev + smoothFactor * (unsm - prev) if useTwoStage else unsm
+
+        kab[i] = prev if locked else smm
+
+    return kab

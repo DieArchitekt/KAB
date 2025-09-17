@@ -1,0 +1,100 @@
+//+------------------------------------------------------------------+
+//| Author: R. P. Kennedy (DieArchitekt)                             |
+//| GitHub: github.com/DieArchitekt                                  |
+//| ORCID: 0009-0006-3598-0581                                       |
+//+------------------------------------------------------------------+
+
+indicator("KAB", overlay=true, precision=4)
+
+// ─── Inputs ───────────────────────────────────────────────────────
+baseAlpha      = input.float(0.1,  "Base smoothing factor", minval=0.0, maxval=1.0)
+shortATRPeriod = input.int(8,      "Fast ATR period", minval=1)
+longATRPeriod  = input.int(64,     "Slow ATR period", minval=2)
+useTwoStage    = input.bool(true,  "Enable 2-stage smoothing")
+smoothFactor   = input.float(0.2,  "2nd-stage smoothing factor", minval=0.0, maxval=1.0)
+maxAlpha       = input.float(0.2,  "Maximum adaptive gain", minval=0.0, maxval=1.0)
+
+// Lock mechanism
+enableLock     = input.bool(true,  "Enable lock")
+lockOnThresh   = input.float(2.0,  "Lock engage threshold")
+lockOffThresh  = input.float(1.8,  "Lock release threshold")
+unlockBars     = input.int(50,     "Bars until unlock (0 = disable)")
+
+// Closed-bar policy
+useClosedOnly  = input.bool(false, "Use closed bars only")
+
+// ─── Helper: True Range ───────────────────────────────────────────
+calcTR(hi, lo, prevClose) =>
+    a = hi - lo
+    b = math.abs(hi - prevClose)
+    c = math.abs(lo - prevClose)
+    math.max(a, math.max(b, c))
+
+// ─── Constants ───────────────────────────────────────────────────
+kShort = 2.0 / (1.0 + shortATRPeriod)
+kLong  = 2.0 / (1.0 + longATRPeriod)
+EPS    = 1e-10
+
+// ─── Runtime input validation ────────────────────────────────────
+if shortATRPeriod < 1 or longATRPeriod < shortATRPeriod
+    runtime.error("Bad ATR periods: need short>=1 and long>=short.")
+if baseAlpha <= 0.0 or maxAlpha <= 0.0 or baseAlpha > maxAlpha or maxAlpha > 1.0
+    runtime.error("Bad alpha bounds: 0<baseAlpha<=maxAlpha<=1.")
+if lockOffThresh > lockOnThresh
+    runtime.error("Hysteresis requires lockOff<=lockOn.")
+
+// ─── Series state ─────────────────────────────────────────────────
+var float sATR    = na
+var float lATR    = na
+var float kabPrev = na
+var float kab     = na
+var bool  locked  = false
+var int   lockCnt = 0
+
+enough = bar_index >= (longATRPeriod + 2)  // bars_count >= longATRPeriod+3
+
+pi = useClosedOnly ? 1 : 0
+
+if enough and na(sATR)
+    sATR    := calcTR(high[pi], low[pi], close[pi+1])
+    lATR    := sATR
+    kabPrev := close[pi]
+    kab     := kabPrev
+    locked  := false
+    lockCnt := 0
+
+if enough and not na(sATR)
+    // ATR updates
+    tr   = calcTR(high[pi], low[pi], close[pi+1])
+    sATR := (1.0 - kShort) * sATR + kShort * tr
+    lATR := (1.0 - kLong ) * lATR + kLong  * sATR
+
+    // Ratio and adaptive gain
+    ratio = sATR / math.max(lATR, EPS)
+    ratio := math.min(ratio, 1.0 / EPS)
+
+    alpha = baseAlpha * ratio
+    alpha := math.min(alpha, maxAlpha)
+
+    // Lock with hysteresis + timer
+    if locked
+        lockCnt += 1
+        if ratio < lockOffThresh or (unlockBars > 0 and lockCnt >= unlockBars)
+            locked  := false
+            lockCnt := 0
+    else
+        if enableLock and ratio > lockOnThresh
+            locked  := true
+            lockCnt := 0
+
+    // Recursive smoothing
+    unsm = kabPrev + alpha * (close[pi] - kabPrev)
+    smm  = useTwoStage ? kabPrev + smoothFactor * (unsm - kabPrev) : unsm
+
+    kab     := locked ? kabPrev : smm
+    kabPrev := kab
+else
+    kab := na
+
+// ─── Plot ─────────────────────────────────────────────────────────
+plot(kab, title="KAB", color=color.new(color.purple, 0), linewidth=2)
