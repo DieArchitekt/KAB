@@ -1,43 +1,42 @@
 # KAB
-The Kennedy Adaptive Baseline (KAB) Indicator
+*A volatility-aware baseline.*
 
-ABOUT:
--------------
-KAB is a recursive smoother that adapts to market volatility.
-It uses a ratio of short-term and long-term ATR to scale gain.
-Result: stable during chaos, responsive during drift.
+Retail traders tend to "experiment" with tweaking lookback periods manually, repeatedly, until they curve-fit. Instead of cycling EMA(20), EMA(21), EMA(22), we can use KAB.
+
+Unlike moving averages (SMA, EMA, WMA, etc.) that are static, and more complex ones (Hull, T3) that are parameter driven, KAB is volatility-aware.
+
+The ratio of ATRs (the volatility of volatility) drives the adaptive smoothing gain. Result: stable during chaos, responsive during drift.
+
+Most adaptive indicators (Kaufman’s, VIDYA, etc.) use efficiency ratios (price direction vs. noise) or raw volatility. KAB uses relative volatility (fast vs slow).
+
+KAB behaves similarly to a moving average / baseline, but it's core mechanism is unique.
 
 MECHANISM:
 -------------
-1. Calculates short and long ATR
-2. Computes ratio = short / long
-3. Uses ratio to scale smoothing coefficient (alpha)
-4. Caps max gain (optional)
-5. Can freeze output when volatility exceeds a threshold
-6. Optional second smoothing pass for signal refinement
+1. Calculate short and long ATR.
+2. Compute ratio = short / long.
+3. Scale the smoothing coefficient (`alpha`) by this ratio.
+4. Cap the maximum gain (optional).
+5. Optionally lock output when volatility exceeds a threshold.
+6. Optional second smoothing pass.
 
 INPUTS:
 ---------------
-- BaseAlpha           = base smoothing gain (default: 0.1)
-- ShortATRPer         = fast ATR window (default: 10)
-- LongATRPer          = slow ATR window (default: 50)
-- UseTwoStageSmooth   = enable second smoothing layer (default: true)
-- SmoothFactor        = gain for 2nd-stage smoothing (default: 0.2)
-- AlphaClampMax       = max allowed adaptive gain (default: 0.2)
-- LockOnHighVol       = freeze signal if vol too high (default: true)
-- VolLockThreshold    = lock trigger ratio (default: 2.0)
+- `BaseAlpha`          = base smoothing gain (default: 0.1)
+- `ShortATRPeriod`     = fast ATR window (default: 8)
+- `LongATRPeriod`      = slow ATR window (default: 64)
+- `UseTwoStage`        = enable second smoothing layer (default: true)
+- `SmoothFactor`       = gain for 2nd-stage smoothing (default: 0.2)
+- `MaxAlpha`           = max allowed adaptive gain (default: 0.2)
+- `EnableLock`         = freeze signal if vol too high (default: true)
+- `LockOnThresh`       = lock trigger ratio (default: 2.0)
+- `LockOffThresh`      = unlock ratio (default: 1.8)
+- `UnlockBars`         = bars to force-release lock (default: 50)
 
 USAGE:
 ------
-- Input:   High, Low, Close series
-- Output:  Smoothed signal (overlay or buffer)
-- Apply:   Trend filters, breakout confirmation, signal gating
-
-NOTES:
-------
-- Python version provided for research/backtesting workflows.
-- MQL5 version built for deployment in MetaTrader 5 terminal.
-- Outputs are consistent across platforms.
+- **Input**: High, Low, Close series
+- **Output**: Adaptive smoothed signal (chart overlay or buffer)
 
 LICENSE:
 --------
